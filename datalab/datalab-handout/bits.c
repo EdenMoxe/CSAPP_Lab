@@ -143,7 +143,7 @@ NOTES:
  *   Rating: 1
  */
 int bitXor(int x, int y) {
-  return 2;
+  return ~(~(x&~y) & ~(~x&y));
 }
 /* 
  * tmin - return minimum two's complement integer 
@@ -152,10 +152,50 @@ int bitXor(int x, int y) {
  *   Rating: 1
  */
 int tmin(void) {
-
-  return 2;
-
+  return (0x01 << 31);
 }
+
+int equal(int x, int y){
+  return !(x^y);
+}
+
+/* 
+ * isLessOrEqual - if x <= y  then return 1, else return 0 
+ *   Example: isLessOrEqual(4,5) = 1.
+ *   Legal ops: ! ~ & ^ | + << >>
+ *   Max ops: 24
+ *   Rating: 3
+ */
+int isLessOrEqual(int x, int y) {  // x <= y
+  int sx = (x >> 31) & 0x01;
+  int sy = (y >> 31) & 0x01;
+  int sign = sx ^ sy;  //若sign=1，异号，要求sx必须为负数(符号位1)
+
+  int diff = (((y + (~x + 1)) >> 31) & 0x01);
+  return (sign & sx) | (!sign & ! diff);
+}
+
+int isMoreOrEqual(int x, int y){  // x >= y
+  int sx = (x >> 31) & 0x01;
+  int sy = (y >> 31) & 0x01;
+  int sign = sx^sy;
+  
+  int diff = (((x + (~y+1)) >> 31) & 0x01);
+  return (sign & sy) | (!sign & !diff);
+}
+
+/* 
+ * conditional - same as x ? y : z 
+ *   Example: conditional(2,4,5) = 4
+ *   Legal ops: ! ~ & ^ | + << >>
+ *   Max ops: 16
+ *   Rating: 3
+ */
+int conditional(int x, int y, int z) {
+  int cond = ~(!x) + 1;   //x=0, cond = 0xFFFFFFFF; x!=0, cond = 0x00000000
+  return (~cond & y) | (cond & z);
+}
+
 //2
 /*
  * isTmax - returns 1 if x is the maximum, two's complement number,
@@ -165,7 +205,8 @@ int tmin(void) {
  *   Rating: 1
  */
 int isTmax(int x) {
-  return 2;
+  //printf("%x\n", ~(0x01 << 31)-1);
+  return equal(x,(~(0x01 << 31)));
 }
 /* 
  * allOddBits - return 1 if all odd-numbered bits in word set to 1
@@ -176,7 +217,7 @@ int isTmax(int x) {
  *   Rating: 2
  */
 int allOddBits(int x) {
-  return 2;
+  return equal(x, (0xAAAAAAAA | x));
 }
 /* 
  * negate - return -x 
@@ -186,7 +227,7 @@ int allOddBits(int x) {
  *   Rating: 2
  */
 int negate(int x) {
-  return 2;
+  return ~x+1;
 }
 //3
 /* 
@@ -199,27 +240,7 @@ int negate(int x) {
  *   Rating: 3
  */
 int isAsciiDigit(int x) {
-  return 2;
-}
-/* 
- * conditional - same as x ? y : z 
- *   Example: conditional(2,4,5) = 4
- *   Legal ops: ! ~ & ^ | + << >>
- *   Max ops: 16
- *   Rating: 3
- */
-int conditional(int x, int y, int z) {
-  return 2;
-}
-/* 
- * isLessOrEqual - if x <= y  then return 1, else return 0 
- *   Example: isLessOrEqual(4,5) = 1.
- *   Legal ops: ! ~ & ^ | + << >>
- *   Max ops: 24
- *   Rating: 3
- */
-int isLessOrEqual(int x, int y) {
-  return 2;
+  return isMoreOrEqual(x, 0x30) & isLessOrEqual(x, 0x39);
 }
 //4
 /* 
@@ -231,7 +252,10 @@ int isLessOrEqual(int x, int y) {
  *   Rating: 4 
  */
 int logicalNeg(int x) {
-  return 2;
+  int negX = ~x + 1;
+  int temp = x | negX;
+  int sign = temp >> 31;
+  return (~sign) & 0x01;
 }
 /* howManyBits - return the minimum number of bits required to represent x in
  *             two's complement
@@ -246,7 +270,16 @@ int logicalNeg(int x) {
  *  Rating: 4
  */
 int howManyBits(int x) {
-  return 0;
+  x = conditional(x>>31, ~x, x);
+  int move = 16;
+  int res = 0;
+  while(move>0){
+    int bit = !!(x>>move);
+    x = conditional(bit, x>>move, x);
+    res += conditional(bit, move, 0);
+    move /= 2;
+  }
+  return res + 1 + !!x;
 }
 //float
 /* 
@@ -261,7 +294,16 @@ int howManyBits(int x) {
  *   Rating: 4
  */
 unsigned floatScale2(unsigned uf) {
-  return 2;
+  unsigned sign = uf & (0x01<<31);
+  unsigned exp = (uf>>23) & 0xff;
+  unsigned frac = uf & 0x007fffff;
+
+  if(exp==255)
+    return uf;
+  else if(exp == 0)
+    return sign | exp<<23 | frac << 1;
+  else 
+    return sign | (exp+1)<<23 | frac;
 }
 /* 
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
@@ -276,7 +318,21 @@ unsigned floatScale2(unsigned uf) {
  *   Rating: 4
  */
 int floatFloat2Int(unsigned uf) {
-  return 2;
+  unsigned sign = uf & (0x01<<31);
+  unsigned exp = 0xff & (uf >> 23);
+  unsigned frac = uf & 0x007fffff;
+  
+  int factExp = exp - 127; //实际指数
+  if(exp == 255 || factExp > 31) //无穷数或者超出int指数范围
+    return (0x01 << 31);
+  else if(factExp < 0)   //指数小于0，即小于等于-1，最大整数不会超过1，直接对齐到0
+    return 0;
+  else{
+    int num = (0x01<<23) | frac;
+    int value = (factExp-23 > 0) ? num<<(factExp-23) : num >> (23-factExp); 
+    value *= (!!sign==0) ? 1 : -1;
+    return value;
+  }
 }
 /* 
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
@@ -292,5 +348,13 @@ int floatFloat2Int(unsigned uf) {
  *   Rating: 4
  */
 unsigned floatPower2(int x) {
-    return 2;
+  if(x > 127)   //超过127，无法表示
+    return 0x7f800000;
+  else if(x >= -126)  //-126-127，正常表示
+    return (x+127) << 23;
+  else if(x > -149)  //小于-126，指数全0非规格数为-126，尾数最小可以表示-23，故-149可表示
+    return 1 << (x + 149);
+  else{
+    return 0;
+  }
 }
